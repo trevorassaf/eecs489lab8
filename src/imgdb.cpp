@@ -225,7 +225,13 @@ nextFi(float multiplier)
   /* Replace the following return statement with your
      computation of the next finish time as indicated above
      and return the result instead. */
-  return(0.0);
+  /* DONE */
+  // fprintf(stderr, "segsize: %u, frate: %d, multiplier: %f\n",
+  //     segsize, frate, multiplier);
+  
+  float segment_delay = (segsize / multiplier) / frate;
+  return Fi + segment_delay;
+
 }
 
 /*
@@ -472,7 +478,41 @@ handleqry()
      * imsg_t packet with im_type set to NETIMG_EFULL.
      */
     /* Task 1: YOUR CODE HERE */
+    bool available_flow = false;
+    unsigned int available_flow_idx = -1;
     
+    if (nflow >= IMGDB_MAXFLOW) {
+      fprintf(stderr, "imgdb::handleqry() Not enough open flow slots!\n");
+      return NETIMG_EFULL;
+    }
+
+    if (rsvdrate + iqry.iq_frate >= linkrate) {
+      fprintf(stderr, "imgdb::handleqry() Not enough linkrate available!\n");
+      return NETIMG_EFULL;
+    }
+
+    for (i = 0; i < IMGDB_MAXFLOW; ++i) {
+      if (!flow[i].in_use) {
+        if (!available_flow) {
+          available_flow_idx = i;
+        }
+        available_flow = true;
+      } 
+    }
+
+    if (available_flow) {
+      fprintf(
+          stderr,
+          "imgdb::handleqry: flow %u added, flow rate: %u, reserved link rate: %u\n",
+          available_flow_idx, iqry.iq_frate, rsvdrate + iqry.iq_frate
+      );
+
+      // Register new link
+      ++nflow;
+      rsvdrate += iqry.iq_frate;
+      flow[available_flow_idx].init(sd, &qhost, &iqry, &imsg, currFi);
+    }
+
     /* Toggle the "started" member variable to on (1) if minflow number
      * of flows have arrived or total reserved rate is at link capacity
      * and set the start time of each flow to the current wall clock time.
@@ -526,6 +566,28 @@ sendpkt()
   int done = 0;
 
   /* Task 3: YOUR CODE HERE */
+  /* DONE */
+  float mult = 1.0 * linkrate / rsvdrate;
+  
+  unsigned int min_finish_time_idx = -1; 
+  currFi = -1;
+
+  for (unsigned int i = 0; i < IMGDB_MAXFLOW; ++i) {
+    if (flow[i].in_use) {
+      float finish_time = flow[i].nextFi(mult);
+      if (min_finish_time_idx == -1 || finish_time < currFi) {
+        min_finish_time_idx = i;
+        currFi = finish_time;
+      }
+    }
+  }
+
+  assert(min_finish_time_idx != -1);
+  assert(currFi != -1);
+
+  fd = (int) min_finish_time_idx;
+
+  done = flow[min_finish_time_idx].sendpkt(sd, fd, currFi);
 
   if (done) {
     /* Task 4: When done sending, remove flow from flow[] by calling
@@ -534,6 +596,9 @@ sendpkt()
      * flow count.
     */
     /* Task 4: YOUR CODE HERE */
+    /* DONE */
+    rsvdrate -= flow[min_finish_time_idx].done();
+    --nflow;
 
     if (nflow <= 0) {
       started = 0;
